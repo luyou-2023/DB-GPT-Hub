@@ -1,0 +1,543 @@
+https://zhuanlan.zhihu.com/p/690364291
+传统BI工具通常分为数据接入层、分析工具层和基于该工具平台的各种行业应用层面，大模型可以在这些环节发挥作用。
+
+在数据处理层面，大模型可以帮助传统的ETL过程简化难度，提高实时交互效率。
+在数据分析层面，大模型可以替代拖拽交互方式，让业务用户用更简单、更高效的方式以自然语言形式与底层数据交互，构建需要的报表和看板。
+在行业应用层面，大模型可以真正发挥对行业知识的理解能力，与具体数据结合，形成具针对客户、特定项目、指标体系的输出，再加上数据准备，可能直接输出标准化的项目成果。
+在LLM赋能BI的过程中，Text2SQL(或者称为NL2SQL)将自然语言表述的查询语句转化为SQL语句，是构建智能BI不可缺少的步骤。
+
+Text2SQL的实现路径有几种：
+
+基于prompt template的方法
+基于SQLDatabaseChain的方法
+基于Agent的方法
+基于prompt template的方法
+NL2SQL核心在于如何把自然语言组装成Prompt，并交给LLM转化成SQL。OpenAI官网上一个标准的chatGPT做自然语言转SQL的例子：
+
+System
+
+/*系统指令*/
+Given the following SQL tables, your job is to write queries given a user’s request.
+
+/*数据库内表结构*/
+CREATE TABLE Orders (
+  OrderID int,
+  CustomerID int,
+  OrderDate datetime,
+  OrderTime varchar(8),
+  PRIMARY KEY (OrderID)
+);
+
+...此处省略其他表...
+
+/*问题*/
+Write a SQL query which computes the average total order value for all orders on 2023-04-01.
+NL2SQL的Prompt基本上就是几个部分组成：
+
+指令（Instruction）：比如，“你是一个SQL生成专家。请参考如下的表格结构，直接输出SQL语句，不要多余的解释。”
+数据结构（Table Schema）：类似于语言翻译中的“词汇表”。即需要使用的数据库表结构，由于大模型无法直接访问数据库，需要把数据的结构组装进入Prompt，通常包括表名、列名、列的类型、列的含义、主外键信息。
+用户问题（Questions）：自然语言表达的问题，比如，“统计上个月的平均订单额”。
+参考样例（Few-shot）：这是一个可选项，当然也是提示工程的常见技巧。即指导大模型生成本次SQL的参考样例。
+其他提示（Tips）：其他认为有必要的指示。比如要求生成的SQL中不允许出现的表达式，或者要求列名必须用“table.column"的形式等。
+基于SQLDatabaseChain的方法
+LangChain提供基于LLM的SQLDatabaseChain，可以利用LLM的能力将自然语言表述的query转化为SQL，连接DB进行查询，并利用LLM组装润色结果，返回最终answer。
+
+from langchain.llms import OpenAI
+from langchain.utilities import SQLDatabase
+from langchain_experimental.sql import SQLDatabaseChain
+import os
+
+os.environ["OPENAI_API_KEY"] = "Your openai key"
+
+db = SQLDatabase.from_uri("sqlite:///..../Chinook.db")
+llm = OpenAI(temperature=0, verbose=True)
+db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True)
+db_chain.run("总共有多少员工?")
+基于SQLDatabaseChain实现的Text2SQL是最基础的实践方式，但对于逻辑复杂的查询在稳定性、可靠性、安全性方面可能无法达到预期，比如输出幻觉问题、数据安全问题。
+
+基于Agent的方法
+LangChain的SQL Agent提供一种比Chain更灵活的与SQL数据库交互的方式。使用SQL Agent主要有以下优点：
+
+可以根据Database Schema和数据库的内容（如描述特定的表）回答问题
+可以通过运行生成的查询、捕获回溯信息并正确地重新生成，以此来纠错
+可以根据需要多次查询数据库以回答用户问题
+仅检索相关表格的schema节省token
+使用create_sql_agent构造器来初始化SQL Agent，Agent使用的SQLDatabaseToolkit包含用于执行以下操作的工具：
+
+创建和执行查询
+检查查询语法
+检索表格的描述
+……等等
+设置
+首先获取必要的packages，设置环境变量：
+
+%pip install --upgrade --quiet  langchain langchain-community langchain-openai
+在本文中默认使用OpenAI模型，可以把模型换成你选择的其他模型。
+
+import getpass
+import os
+
+os.environ["OPENAI_API_KEY"] = getpass.getpass()
+
+# Uncomment the below to use LangSmith. Not required.
+# os.environ["LANGCHAIN_API_KEY"] = getpass.getpass()
+# os.environ["LANGCHAIN_TRACING_V2"] = "true"
+以下示例将使用SQLite与Chinook数据库的连接。按照安装步骤在与此notebook相同的目录中创建Chinok.db：
+
+将 此文件 存为 Chinook_Sqlite.sql
+运行 sqlite3 Chinook.db
+运行 .read Chinook_Sqlite.sql
+测试 SELECT * FROM Artist LIMIT 10
+现在Chinhook.db已经在我们的目录中，可以使用SQLAlchemy驱动的SQLDatabase类与它进行接口对接：
+
+from langchain_community.utilities import SQLDatabase
+
+db = SQLDatabase.from_uri("sqlite:///Chinook.db")
+print(db.dialect)
+print(db.get_usable_table_names())
+db.run("SELECT * FROM Artist LIMIT 10;")
+
+
+sqlite
+['Album', 'Artist', 'Customer', 'Employee', 'Genre', 'Invoice', 'InvoiceLine', 'MediaType', 'Playlist', 'PlaylistTrack', 'Track']
+
+
+"[(1, 'AC/DC'), (2, 'Accept'), (3, 'Aerosmith'), (4, 'Alanis Morissette'), (5, 'Alice In Chains'), (6, 'Antônio Carlos Jobim'), (7, 'Apocalyptica'), (8, 'Audioslave'), (9, 'BackBeat'), (10, 'Billy Cobham')]"
+Agent
+我们将使用OpenAI聊天模型和"openai-tools" agent，该 agent 将使用OpenAI的 function-calling API来驱动agent 的工具选择和调用。
+正如我们所看到的，agent 将首先选择哪些表是相关的，然后将这些表的schema和一些示例行添加到prompt中。
+
+from langchain_community.agent_toolkits import create_sql_agent
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+agent_executor = create_sql_agent(llm, db=db, agent_type="openai-tools", verbose=True)
+验证效果
+
+agent_executor.invoke(
+    "List the total sales per country. Which country's customers spent the most?"
+)
+执行过程
+
+> Entering new AgentExecutor chain...
+
+Invoking: `sql_db_list_tables` with `{}`
+
+
+Album, Artist, Customer, Employee, Genre, Invoice, InvoiceLine, MediaType, Playlist, PlaylistTrack, Track
+Invoking: `sql_db_schema` with `Invoice,Customer`
+
+
+
+CREATE TABLE "Customer" (
+    "CustomerId" INTEGER NOT NULL, 
+    "FirstName" NVARCHAR(40) NOT NULL, 
+    "LastName" NVARCHAR(20) NOT NULL, 
+    "Company" NVARCHAR(80), 
+    "Address" NVARCHAR(70), 
+    "City" NVARCHAR(40), 
+    "State" NVARCHAR(40), 
+    "Country" NVARCHAR(40), 
+    "PostalCode" NVARCHAR(10), 
+    "Phone" NVARCHAR(24), 
+    "Fax" NVARCHAR(24), 
+    "Email" NVARCHAR(60) NOT NULL, 
+    "SupportRepId" INTEGER, 
+    PRIMARY KEY ("CustomerId"), 
+    FOREIGN KEY("SupportRepId") REFERENCES "Employee" ("EmployeeId")
+)
+
+/*
+3 rows from Customer table:
+CustomerId  FirstName   LastName    Company Address City    State   Country PostalCode  Phone   Fax Email   SupportRepId
+1   Luís    Gonçalves   Embraer - Empresa Brasileira de Aeronáutica S.A.    Av. Brigadeiro Faria Lima, 2170 São José dos Campos SP  Brazil  12227-000   +55 (12) 3923-5555  +55 (12) 3923-5566  luisg@embraer.com.br    3
+2   Leonie  Köhler  None    Theodor-Heuss-Straße 34 Stuttgart   None    Germany 70174   +49 0711 2842222    None    leonekohler@surfeu.de   5
+3   François    Tremblay    None    1498 rue Bélanger   Montréal    QC  Canada  H2G 1A7 +1 (514) 721-4711   None    ftremblay@gmail.com 3
+*/
+
+
+CREATE TABLE "Invoice" (
+    "InvoiceId" INTEGER NOT NULL, 
+    "CustomerId" INTEGER NOT NULL, 
+    "InvoiceDate" DATETIME NOT NULL, 
+    "BillingAddress" NVARCHAR(70), 
+    "BillingCity" NVARCHAR(40), 
+    "BillingState" NVARCHAR(40), 
+    "BillingCountry" NVARCHAR(40), 
+    "BillingPostalCode" NVARCHAR(10), 
+    "Total" NUMERIC(10, 2) NOT NULL, 
+    PRIMARY KEY ("InvoiceId"), 
+    FOREIGN KEY("CustomerId") REFERENCES "Customer" ("CustomerId")
+)
+
+/*
+3 rows from Invoice table:
+InvoiceId   CustomerId  InvoiceDate BillingAddress  BillingCity BillingState    BillingCountry  BillingPostalCode   Total
+1   2   2009-01-01 00:00:00 Theodor-Heuss-Straße 34 Stuttgart   None    Germany 70174   1.98
+2   4   2009-01-02 00:00:00 Ullevålsveien 14    Oslo    None    Norway  0171    3.96
+3   8   2009-01-03 00:00:00 Grétrystraat 63 Brussels    None    Belgium 1000    5.94
+*/
+Invoking: `sql_db_query` with `SELECT c.Country, SUM(i.Total) AS TotalSales FROM Invoice i JOIN Customer c ON i.CustomerId = c.CustomerId GROUP BY c.Country ORDER BY TotalSales DESC LIMIT 10;`
+responded: To list the total sales per country, I can query the "Invoice" and "Customer" tables. I will join these tables on the "CustomerId" column and group the results by the "BillingCountry" column. Then, I will calculate the sum of the "Total" column to get the total sales per country. Finally, I will order the results in descending order of the total sales.
+
+Here is the SQL query:
+
+```sql
+SELECT c.Country, SUM(i.Total) AS TotalSales
+FROM Invoice i
+JOIN Customer c ON i.CustomerId = c.CustomerId
+GROUP BY c.Country
+ORDER BY TotalSales DESC
+LIMIT 10;
+```
+
+Now, I will execute this query to get the total sales per country.
+
+[('USA', 523.0600000000003), ('Canada', 303.9599999999999), ('France', 195.09999999999994), ('Brazil', 190.09999999999997), ('Germany', 156.48), ('United Kingdom', 112.85999999999999), ('Czech Republic', 90.24000000000001), ('Portugal', 77.23999999999998), ('India', 75.25999999999999), ('Chile', 46.62)]The total sales per country are as follows:
+
+1. USA: $523.06
+2. Canada: $303.96
+3. France: $195.10
+4. Brazil: $190.10
+5. Germany: $156.48
+6. United Kingdom: $112.86
+7. Czech Republic: $90.24
+8. Portugal: $77.24
+9. India: $75.26
+10. Chile: $46.62
+
+To answer the second question, the country whose customers spent the most is the USA, with a total sales of $523.06.
+
+> Finished chain.
+最终结果
+
+{'input': "List the total sales per country. Which country's customers spent the most?",
+ 'output': 'The total sales per country are as follows:\n\n1. USA: $523.06\n2. Canada: $303.96\n3. France: $195.10\n4. Brazil: $190.10\n5. Germany: $156.48\n6. United Kingdom: $112.86\n7. Czech Republic: $90.24\n8. Portugal: $77.24\n9. India: $75.26\n10. Chile: $46.62\n\nTo answer the second question, the country whose customers spent the most is the USA, with a total sales of $523.06.'}
+使用动态few-shot prompt
+为了优化 agent 性能，我们可以提供具有特定领域知识的自定义prompt。在这种情况下，我们将使用example selector 创建few shot prompt，该example selector根据用户输入动态构建few shot prompt。通过在 prompt 中插入相关的query作为参考，可以帮助模型进行更好的查询。
+首先，我们需要一些用户输入SQL查询示例：
+
+examples = [
+    {"input": "List all artists.", "query": "SELECT * FROM Artist;"},
+    {
+        "input": "Find all albums for the artist 'AC/DC'.",
+        "query": "SELECT * FROM Album WHERE ArtistId = (SELECT ArtistId FROM Artist WHERE Name = 'AC/DC');",
+    },
+    {
+        "input": "List all tracks in the 'Rock' genre.",
+        "query": "SELECT * FROM Track WHERE GenreId = (SELECT GenreId FROM Genre WHERE Name = 'Rock');",
+    },
+    {
+        "input": "Find the total duration of all tracks.",
+        "query": "SELECT SUM(Milliseconds) FROM Track;",
+    },
+    {
+        "input": "List all customers from Canada.",
+        "query": "SELECT * FROM Customer WHERE Country = 'Canada';",
+    },
+    {
+        "input": "How many tracks are there in the album with ID 5?",
+        "query": "SELECT COUNT(*) FROM Track WHERE AlbumId = 5;",
+    },
+    {
+        "input": "Find the total number of invoices.",
+        "query": "SELECT COUNT(*) FROM Invoice;",
+    },
+    {
+        "input": "List all tracks that are longer than 5 minutes.",
+        "query": "SELECT * FROM Track WHERE Milliseconds > 300000;",
+    },
+    {
+        "input": "Who are the top 5 customers by total purchase?",
+        "query": "SELECT CustomerId, SUM(Total) AS TotalPurchase FROM Invoice GROUP BY CustomerId ORDER BY TotalPurchase DESC LIMIT 5;",
+    },
+    {
+        "input": "Which albums are from the year 2000?",
+        "query": "SELECT * FROM Album WHERE strftime('%Y', ReleaseDate) = '2000';",
+    },
+    {
+        "input": "How many employees are there",
+        "query": 'SELECT COUNT(*) FROM "Employee"',
+    },
+]
+现在我们可以创建example selector。这里将采用实际的用户输入，并选择一些示例添加到few-shot prompt中。使用SemanticSimilarityExampleSelector基于配置的embedding和向量存储执行语义搜索，以找到与输入最相似的示例：
+
+from langchain_community.vectorstores import FAISS
+from langchain_core.example_selectors import SemanticSimilarityExampleSelector
+from langchain_openai import OpenAIEmbeddings
+
+example_selector = SemanticSimilarityExampleSelector.from_examples(
+    examples,
+    OpenAIEmbeddings(),
+    FAISS,
+    k=5,
+    input_keys=["input"],
+)
+现在创建FewShotPromptTemplate，它的参数包括example selector、用于格式化每个示例的example prompt，以及放在格式化示例前后的字符串前缀和后缀：
+
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    FewShotPromptTemplate,
+    MessagesPlaceholder,
+    PromptTemplate,
+    SystemMessagePromptTemplate,
+)
+
+system_prefix = """You are an agent designed to interact with a SQL database.
+Given an input question, create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer.
+Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most {top_k} results.
+You can order the results by a relevant column to return the most interesting examples in the database.
+Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+You have access to tools for interacting with the database.
+Only use the given tools. Only use the information returned by the tools to construct your final answer.
+You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.
+
+DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
+
+If the question does not seem related to the database, just return "I don't know" as the answer.
+
+Here are some examples of user inputs and their corresponding SQL queries:"""
+
+few_shot_prompt = FewShotPromptTemplate(
+    example_selector=example_selector,
+    example_prompt=PromptTemplate.from_template(
+        "User input: {input}\nSQL query: {query}"
+    ),
+    input_variables=["input", "dialect", "top_k"],
+    prefix=system_prefix,
+    suffix="",
+)
+由于底层代理是OpenAI tools agent，它使用OpenAI function calling，因此完整的prompt应该是带有human message template 和 agent_scratchpad MessagesPlaceholder的 chat prompt。few-shot prompt将用于system message：
+
+full_prompt = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate(prompt=few_shot_prompt),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ]
+)
+
+
+# Example formatted prompt
+prompt_val = full_prompt.invoke(
+    {
+        "input": "How many arists are there",
+        "top_k": 5,
+        "dialect": "SQLite",
+        "agent_scratchpad": [],
+    }
+)
+print(prompt_val.to_string())
+Prompt的内容如下，由系统指令、few-shot示例和用户query组成：
+
+System: You are an agent designed to interact with a SQL database.
+Given an input question, create a syntactically correct SQLite query to run, then look at the results of the query and return the answer.
+Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 5 results.
+You can order the results by a relevant column to return the most interesting examples in the database.
+Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+You have access to tools for interacting with the database.
+Only use the given tools. Only use the information returned by the tools to construct your final answer.
+You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.
+
+DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
+
+If the question does not seem related to the database, just return "I don't know" as the answer.
+
+Here are some examples of user inputs and their corresponding SQL queries:
+
+User input: List all artists.
+SQL query: SELECT * FROM Artist;
+
+User input: How many employees are there
+SQL query: SELECT COUNT(*) FROM "Employee"
+
+User input: How many tracks are there in the album with ID 5?
+SQL query: SELECT COUNT(*) FROM Track WHERE AlbumId = 5;
+
+User input: List all tracks in the 'Rock' genre.
+SQL query: SELECT * FROM Track WHERE GenreId = (SELECT GenreId FROM Genre WHERE Name = 'Rock');
+
+User input: Which albums are from the year 2000?
+SQL query: SELECT * FROM Album WHERE strftime('%Y', ReleaseDate) = '2000';
+Human: How many arists are there
+用自定义prompt创建agent
+
+agent = create_sql_agent(
+    llm=llm,
+    db=db,
+    prompt=full_prompt,
+    verbose=True,
+    agent_type="openai-tools",
+)
+试一下效果
+
+agent.invoke({"input": "How many artists are there?"})
+执行过程
+
+> Entering new AgentExecutor chain...
+
+Invoking: `sql_db_query` with `{'query': 'SELECT COUNT(*) FROM Artist'}`
+
+
+[(275,)]There are 275 artists in the database.
+
+> Finished chain.
+最终结果
+
+{'input': 'How many artists are there?',
+ 'output': 'There are 275 artists in the database.'}
+处理高维列
+为了过滤包含专有名词（如地址、歌曲名称或艺术家）的列，我们首先需要仔细检查拼写以便正确过滤数据。
+用数据库中所有不同的专用名词创建一个向量存储，每当用户在问题中包含专有名词时让agent查询向量存储，以找到该词的正确拼写。通过这种方式，agent可以确保在构建目标查询之前了解用户所指的实体。
+首先，需要每个实体的唯一值，为此我们定义一个函数将结果解析为元素列表：
+
+import ast
+import re
+
+def query_as_list(db, query):
+    res = db.run(query)
+    res = [el for sub in ast.literal_eval(res) for el in sub if el]
+    res = [re.sub(r"\b\d+\b", "", string).strip() for string in res]
+    return list(set(res))
+
+artists = query_as_list(db, "SELECT Name FROM Artist")
+albums = query_as_list(db, "SELECT Title FROM Album")
+albums[:5]
+
+
+['Os Cães Ladram Mas A Caravana Não Pára',
+ 'War',
+ 'Mais Do Mesmo',
+ "Up An' Atom",
+ 'Riot Act']
+继续创建自定义检索器工具和最终agent：
+
+from langchain.agents.agent_toolkits import create_retriever_tool
+
+vector_db = FAISS.from_texts(artists + albums, OpenAIEmbeddings())
+retriever = vector_db.as_retriever(search_kwargs={"k": 5})
+description = """Use to look up values to filter on. Input is an approximate spelling of the proper noun, output is \
+valid proper nouns. Use the noun most similar to the search."""
+retriever_tool = create_retriever_tool(
+    retriever,
+    name="search_proper_nouns",
+    description=description,
+)
+
+system = """You are an agent designed to interact with a SQL database.
+Given an input question, create a syntactically correct {dialect} query to run, then look at the results of the query and return the answer.
+Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most {top_k} results.
+You can order the results by a relevant column to return the most interesting examples in the database.
+Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+You have access to tools for interacting with the database.
+Only use the given tools. Only use the information returned by the tools to construct your final answer.
+You MUST double check your query before executing it. If you get an error while executing a query, rewrite the query and try again.
+
+DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
+
+If you need to filter on a proper noun, you must ALWAYS first look up the filter value using the "search_proper_nouns" tool! 
+
+You have access to the following tables: {table_names}
+
+If the question does not seem related to the database, just return "I don't know" as the answer."""
+
+prompt = ChatPromptTemplate.from_messages(
+    [("system", system), ("human", "{input}"), MessagesPlaceholder("agent_scratchpad")]
+)
+agent = create_sql_agent(
+    llm=llm,
+    db=db,
+    extra_tools=[retriever_tool],
+    prompt=prompt,
+    agent_type="openai-tools",
+    verbose=True,
+)
+测试一下效果
+
+agent.invoke({"input": "How many albums does alis in chain have?"})
+执行过程
+
+> Entering new AgentExecutor chain...
+
+Invoking: `search_proper_nouns` with `{'query': 'alis in chain'}`
+
+
+Alice In Chains
+
+Aisha Duo
+
+Xis
+
+Da Lama Ao Caos
+
+A-Sides
+Invoking: `sql_db_query` with `SELECT COUNT(*) FROM Album WHERE ArtistId = (SELECT ArtistId FROM Artist WHERE Name = 'Alice In Chains')`
+
+
+[(1,)]Alice In Chains has 1 album.
+
+> Finished chain.
+最终结果
+
+{'input': 'How many albums does alis in chain have?',
+ 'output': 'Alice In Chains has 1 album.'}
+正如我们所看到的，该agent使用了search_proper_nouns工具来检查如何正确地查询指定艺术家的数据库。
+
+难点与挑战
+当前AI模型输出SQL的准确性还远无法达到人类工程师的输出精度。
+自然语言表达本身的歧义性，而SQL是一种精确编程语言。因此在实际应用中，可能会出现无法理解，或者错误理解的情况。比如，“谁是这个月最厉害的销售”，那么AI是理解成订单数量最多，还是订单金额最大？
+尽管可以通过Prompt输入数据结构信息帮助AI模型来理解，但有时候AI可能会由于缺乏外部行业知识导致错误。比如，“分析去年的整体客户流失率？”，如果AI缺乏对“客户流失率”的理解，自然就会出错或者编造。
+NL2SQL的方案在企业应用中还会面临两个严重的挑战：
+
+可能会出现正常运行的“假象”
+即正常完成了任务，但实际结果是错误的。由于NL2SQL是直接输出用于数据库访问的语句，理论上只要不存在基本的语法错误，就可以执行成功，即使转换的SQL在语义上是错误的！
+NL2SQL输出语义准确性衡量的复杂性本质上来自于这样一个事实：判断AI输出的一段代码是否正确，要比判断一个选择题答案是否正确，或者一段字符串的相似度要复杂的多。
+评估NL2SQL模型输出正确性的复杂所在：你既不能用输出SQL的执行结果来判断，也不能简单的把输出SQL与标准答案对比来判断。
+
+企业应用的特点会加大错误输出的概率
+优化方向
+选择合适的大模型
+DB-GPT-Hub
+
+项目地址：https://github.com/eosphoros-ai/DB-GPT-Hub/tree/main
+DB-GPT-Hub是一个利用LLMs实现Text-to-SQL解析的实验项目，主要包含数据集收集、数据预处理、模型选择与构建和微调权重等步骤，通过这一系列的处理可以在提高Text-to-SQL能力的同时降低模型训练成本，让更多的开发者参与到Text-to-SQL的准确度提升工作当中，最终实现基于数据库的自动问答能力，让用户可以通过自然语言描述完成复杂数据库的查询操作等工作。 目前我们已经基于多个大模型打通从数据处理、模型SFT训练、预测输出和评估的整个流程，代码在本项目中均可以直接复用。
+
+SQLCoder
+项目地址：https://github.com/defog-ai/sqlcoder
+
+date	group_by	order_by	ratio	join	where	
+sqlcoder-70b	96	91.4	97.1	85.7	97.1	91.4
+sqlcoder-7b-2	96	91.4	94.3	91.4	94.3	77.1
+sqlcoder-34b	80	94.3	85.7	77.1	85.7	80
+gpt-4	72	94.3	97.1	80	91.4	80
+gpt-4-turbo	76	91.4	91.4	62.8	88.6	77.1
+natural-sql-7b	56	88.6	85.7	60	88.6	80
+sqlcoder-7b	64	82.9	74.3	54.3	74.3	74.3
+gpt-3.5	72	77.1	82.8	34.3	65.7	71.4
+claude-2	52	71.4	74.3	57.1	65.7	62.9
+从以上项目的测试结果看，codeLlama-13b与SQLCoder-34b是当前开源领域比较合适的text2SQL的模型选择。
+
+提示工程
+DAIN-SQL
+项目地址：https://github.com/BeachWang/DAIL-SQL
+阿里推出的一种针对LLM在text2SQL应用的提示工程优化技术。在Spider基准测试中取得当时的最高分86.6分，在更高难度的BIRD数据集测试中也取得了57.41分。其优化方法本质上是：在传统的text2SQL的提示中通过注入一些相似的样例，利用LLM的上下文学习能力，以提高输出SQL的精度。
+原理是通过用户的提问“骨架”找到相似的问句；再通过预生成的SQL“骨架”找到相似的SQL，进而通过算法进行相似度排序，取出最相似的样例（包括提问与SQL），组装到Prompt。
+
+
+C3-SQL
+浙江大学推出一种针对text2SQL场景的提示工程优化方法，与DAIL-SQL不同的是，这是一种zero-shot的提示方法（零样例），即不在prompt增加样例，而是通过三个方面的提示或优化来提升输出的质量：
+
+Clear Prompting：通过对Prompt提供更清晰的层次，并只嵌入必要的数据结构信息，来优化提示。一个重要的思想是，在构建Prompt之前，先通过大语言模型来分析本次输入最可能相关的数据实体(table)及其列(column)信息，即仅召回本次最可能用到的table和column，然后组装到Prompt，而不是把整个数据库的结构全部组装进入。
+Claibration Bias Prompting：通过在上下文信息中嵌入一些偏差提示，可以简单的理解为指示大模型在一些场景下需要遵循的一些规则或者“注意点”。
+Consistent Output: 这是一种输出处理方式，也是解决大模型输出不确定性的一种方案。可以解释为：让大模型输出多次SQL，然后根据输出的SQL执行结果进行“投票”。比如让LLM输出四次SQL，其中三个的执行结果都是一致的，另一个结果不一致，那么就认为这三次的输出是正确的。
+
+开源方案
+Data-Copilot
+项目地址：https://github.com/zwq2018/Data-Copilot
+论文地址：https://arxiv.org/abs/2306.07209
+Demo地址：https://huggingface.co/spaces/zwq2018/Data-Copilot
+Data-Copilot是一个基于LLM的系统，用于处理与数据相关的任务，连接了数十亿条数据和多样化的用户需求。它独立设计接口工具，以高效地管理、调用、处理和可视化数据。在接收到复杂请求时，Data-Copilot会自主调用这些自设计的接口，构建一个工作流程来满足用户的意图。在没有人类协助的情况下，它能够熟练地将来自不同来源、不同格式的原始数据转化为人性化的输出，如图形、表格和文本。
+
+DeepBI
+项目地址：https://github.com/DeepInsight-AI/DeepBI?tab=readme-ov-file
+DeepBI是一款AI原生的数据分析平台。DeepBI充分利用大语言模型的能力来探索、查询、可视化和共享来自任何数据源的数据。用户可以使用DeepBI洞察数据并做出数据驱动的决策。
